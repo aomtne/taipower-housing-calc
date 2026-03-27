@@ -16,6 +16,9 @@ body{font-family:"Microsoft JhengHei","Noto Sans TC",Arial,sans-serif;background
 .param-group label{font-size:13px;opacity:.9}
 .param-group input,.param-group select{padding:4px 8px;border:1px solid rgba(255,255,255,.3);border-radius:4px;background:rgba(255,255,255,.9);color:#333;font-size:13px;width:60px}
 .param-group select{width:auto}
+.btn-confirm{padding:8px 20px;border:none;border-radius:6px;background:#f39c12;color:#fff;font-size:14px;font-weight:bold;cursor:pointer;transition:all .2s;letter-spacing:1px;box-shadow:0 2px 6px rgba(0,0,0,.2)}
+.btn-confirm:hover{background:#e67e22;box-shadow:0 3px 10px rgba(0,0,0,.3);transform:translateY(-1px)}
+.btn-confirm:active{transform:translateY(0);box-shadow:0 1px 3px rgba(0,0,0,.2)}
 
 /* Main layout */
 .main{display:flex;gap:0;height:calc(100vh - 64px)}
@@ -97,15 +100,15 @@ input[type="file"]{display:none}
   <div class="header-right">
     <div class="param-group">
       <label>大潭總人數</label>
-      <input type="number" id="totalPeople" value="26" min="1" max="100" onchange="recalculate()">
+      <input type="number" id="totalPeople" value="26" min="1" max="100">
     </div>
     <div class="param-group">
       <label>住宿金額(未稅)</label>
-      <input type="number" id="housingRate" value="2190" min="0" style="width:70px" onchange="recalculate()">
+      <input type="number" id="housingRate" value="2190" min="0" style="width:70px">
     </div>
     <div class="param-group">
       <label>G欄計算</label>
-      <select id="gMode" onchange="recalculate()">
+      <select id="gMode">
         <option value="ndt_et_bridge" selected>NDT+ET(橋接≤3天空檔)</option>
         <option value="inspection">NDT+ET檢測天數</option>
         <option value="overhaul">大修天數</option>
@@ -113,15 +116,16 @@ input[type="file"]{display:none}
     </div>
     <div class="param-group">
       <label>橋接上限(天)</label>
-      <input type="number" id="bridgeGap" value="3" min="0" max="10" style="width:45px" onchange="recalculate()">
+      <input type="number" id="bridgeGap" value="3" min="0" max="10" style="width:45px">
     </div>
     <div class="param-group">
       <label>計算期間</label>
-      <input type="date" id="periodStart" style="width:130px" onchange="recalculate()">
+      <input type="date" id="periodStart" style="width:130px">
       <span style="opacity:.7">～</span>
-      <input type="date" id="periodEnd" style="width:130px" onchange="recalculate()">
+      <input type="date" id="periodEnd" style="width:130px">
       <button class="btn-reset-period" onclick="resetPeriod()" title="重設為全部期間" style="background:none;border:1px solid rgba(255,255,255,.4);color:#fff;border-radius:4px;padding:2px 8px;cursor:pointer;font-size:11px">全部</button>
     </div>
+    <button id="confirmBtn" class="btn-confirm" onclick="onConfirm()" title="確認參數並重新計算">✔ 確認計算</button>
   </div>
 </div>
 
@@ -323,8 +327,9 @@ function classifyUnits() {
 }
 
 function resetPeriod() {
-  let minD = null, maxD = null;
-  for (const u of datanUnits) {
+  var minD = null, maxD = null;
+  for (var i = 0; i < datanUnits.length; i++) {
+    var u = datanUnits[i];
     if (u.ohStart && (!minD || u.ohStart < minD)) minD = u.ohStart;
     if (u.ohEnd && (!maxD || u.ohEnd > maxD)) maxD = u.ohEnd;
   }
@@ -332,7 +337,6 @@ function resetPeriod() {
     document.getElementById('periodStart').value = dateStr(minD);
     document.getElementById('periodEnd').value = dateStr(maxD);
   }
-  recalculate();
 }
 
 // ===== CALCULATION ENGINE =====
@@ -373,59 +377,92 @@ function getUnitActivePeriod(u) {
   return {start: new Date(Math.min(...starts)), end: new Date(Math.max(...ends))};
 }
 
+function onConfirm() {
+  try {
+    if (!scheduleData || datanUnits.length === 0) {
+      alert('請先匯入大修檢測排程 Excel 檔案');
+      return;
+    }
+    // Read all current parameter values and recalculate
+    recalculate();
+    // Visual feedback — flash the button
+    var btn = document.getElementById('confirmBtn');
+    btn.textContent = '\u2714 已更新';
+    btn.style.background = '#27ae60';
+    setTimeout(function() { btn.textContent = '\u2714 確認計算'; btn.style.background = ''; }, 1200);
+  } catch(e) {
+    alert('計算錯誤: ' + e.message);
+    console.error(e);
+  }
+}
+
 function recalculate() {
-  if (!scheduleData || datanUnits.length === 0) return;
-  const TOTAL = parseInt(document.getElementById('totalPeople').value) || 26;
-  const gMode = document.getElementById('gMode').value;
+  if (!scheduleData || datanUnits.length === 0) {
+    console.log('[recalc] no data, abort');
+    return;
+  }
+  var TOTAL = parseInt(document.getElementById('totalPeople').value) || 26;
+  var gMode = document.getElementById('gMode').value;
 
   // Determine simulation period — use user-specified or auto-detect
-  const pStartStr = document.getElementById('periodStart').value;
-  const pEndStr = document.getElementById('periodEnd').value;
-  let simStart = pStartStr ? new Date(pStartStr + 'T00:00:00') : null;
-  let simEnd = pEndStr ? new Date(pEndStr + 'T00:00:00') : null;
+  var pStartStr = document.getElementById('periodStart').value;
+  var pEndStr = document.getElementById('periodEnd').value;
+  var simStart = pStartStr ? new Date(pStartStr + 'T00:00:00') : null;
+  var simEnd = pEndStr ? new Date(pEndStr + 'T00:00:00') : null;
 
-  if (!simStart || !simEnd) {
-    for (const u of datanUnits) {
-      if (u.ohStart && (!simStart || u.ohStart < simStart)) simStart = u.ohStart;
-      if (u.ohEnd && (!simEnd || u.ohEnd > simEnd)) simEnd = u.ohEnd;
+  if (!simStart || !simEnd || isNaN(simStart.getTime()) || isNaN(simEnd.getTime())) {
+    simStart = null; simEnd = null;
+    for (var i = 0; i < datanUnits.length; i++) {
+      var uu = datanUnits[i];
+      if (uu.ohStart && (!simStart || uu.ohStart < simStart)) simStart = uu.ohStart;
+      if (uu.ohEnd && (!simEnd || uu.ohEnd > simEnd)) simEnd = uu.ohEnd;
     }
   }
-  if (!simStart || !simEnd) return;
+  if (!simStart || !simEnd) {
+    console.log('[recalc] no period, abort');
+    return;
+  }
+  console.log('[recalc] TOTAL=' + TOTAL + ' period=' + dateStr(simStart) + '~' + dateStr(simEnd) + ' units=' + datanUnits.length);
 
   // Filter 大潭 units: only include units whose overhaul period overlaps with simulation period
-  const filteredUnits = datanUnits.filter(u => {
-    if (!u.ohStart || !u.ohEnd) return false;
-    return u.ohStart <= simEnd && u.ohEnd >= simStart;
-  });
+  var filteredUnits = [];
+  for (var fi = 0; fi < datanUnits.length; fi++) {
+    var fu = datanUnits[fi];
+    if (fu.ohStart && fu.ohEnd && fu.ohStart <= simEnd && fu.ohEnd >= simStart) {
+      filteredUnits.push(fu);
+    }
+  }
+  console.log('[recalc] filteredUnits=' + filteredUnits.length);
 
   // Day-by-day simulation
-  const unitPersonDays = {};
-  const unitActiveDays = {};
-  for (const u of filteredUnits) { unitPersonDays[u.short] = 0; unitActiveDays[u.short] = 0; }
+  var unitPersonDays = {};
+  var unitActiveDays = {};
+  for (var ui = 0; ui < filteredUnits.length; ui++) { unitPersonDays[filteredUnits[ui].short] = 0; unitActiveDays[filteredUnits[ui].short] = 0; }
 
   dailyData = [];
-  const day = new Date(simStart);
+  var day = new Date(simStart);
   while (day <= simEnd) {
-    const sup = getSupportDemand(day);
-    const available = Math.max(0, TOTAL - sup.total);
+    var sup = getSupportDemand(day);
+    var available = Math.max(0, TOTAL - sup.total);
 
-    const active = [];
-    for (const u of filteredUnits) {
-      const demand = getUnitDemand(u, day);
-      if (demand > 0) active.push({unit: u.short, demand});
+    var active = [];
+    for (var ai = 0; ai < filteredUnits.length; ai++) {
+      var demand = getUnitDemand(filteredUnits[ai], day);
+      if (demand > 0) active.push({unit: filteredUnits[ai].short, demand: demand});
     }
 
-    const totalDemand = active.reduce((s, a) => s + a.demand, 0);
-    const row = {date: dateStr(day), support: sup.total, supportDetail: sup.detail, available};
-    let dayTotal = 0;
-    for (const u of filteredUnits) row[u.short] = 0;
+    var totalDemand = 0;
+    for (var di = 0; di < active.length; di++) totalDemand += active[di].demand;
+    var row = {date: dateStr(day), support: sup.total, supportDetail: sup.detail, available: available};
+    var dayTotal = 0;
+    for (var ri = 0; ri < filteredUnits.length; ri++) row[filteredUnits[ri].short] = 0;
 
-    for (const a of active) {
-      const share = totalDemand > 0 ? available * (a.demand / totalDemand) : 0;
-      row[a.unit] = Math.round(share * 10) / 10;
-      dayTotal += row[a.unit];
-      unitPersonDays[a.unit] = (unitPersonDays[a.unit]||0) + share;
-      unitActiveDays[a.unit] = (unitActiveDays[a.unit]||0) + 1;
+    for (var si = 0; si < active.length; si++) {
+      var share = totalDemand > 0 ? available * (active[si].demand / totalDemand) : 0;
+      row[active[si].unit] = Math.round(share * 10) / 10;
+      dayTotal += row[active[si].unit];
+      unitPersonDays[active[si].unit] = (unitPersonDays[active[si].unit]||0) + share;
+      unitActiveDays[active[si].unit] = (unitActiveDays[active[si].unit]||0) + 1;
     }
     row.totalDatan = Math.round(dayTotal * 10) / 10;
     dailyData.push(row);
@@ -433,95 +470,97 @@ function recalculate() {
   }
 
   // Calculate F and G for each unit
-  const bridgeGap = parseInt(document.getElementById('bridgeGap').value) || 3;
+  var bridgeGap = parseInt(document.getElementById('bridgeGap').value) || 3;
   allocationResult = [];
 
   // Build sorted list of filtered 大潭 inspection periods for bridging calculation
-  const allPeriods = [];
-  for (const u of filteredUnits) {
-    const period = getUnitActivePeriod(u);
-    if (period.start && period.end) {
-      allPeriods.push({unit: u.short, start: period.start, end: period.end});
+  var allPeriods = [];
+  for (var pi = 0; pi < filteredUnits.length; pi++) {
+    var pp = getUnitActivePeriod(filteredUnits[pi]);
+    if (pp.start && pp.end) {
+      allPeriods.push({unit: filteredUnits[pi].short, start: pp.start, end: pp.end});
     }
   }
-  allPeriods.sort((a, b) => a.start - b.start);
+  allPeriods.sort(function(a, b) { return a.start - b.start; });
 
-  // For each unit, calculate bridged G:
-  // G = unit's own NDT+ET days + gap days AFTER this unit (if gap ≤ bridgeGap and next unit exists)
-  // This ensures people don't have a break — they stay housed during the short gap
+  // For each unit, calculate bridged G
   function calcBridgedG(unitShort) {
-    const thisUnit = allPeriods.find(p => p.unit === unitShort);
+    var thisUnit = null;
+    for (var bi = 0; bi < allPeriods.length; bi++) {
+      if (allPeriods[bi].unit === unitShort) { thisUnit = allPeriods[bi]; break; }
+    }
     if (!thisUnit) return 0;
-    const baseDays = daysBetween(thisUnit.start, thisUnit.end);
+    var baseDays = daysBetween(thisUnit.start, thisUnit.end);
 
-    // Find the earliest unit that starts after this one ends
-    let nextStart = null;
-    for (const p of allPeriods) {
-      if (p.start > thisUnit.end) {
-        if (!nextStart || p.start < nextStart) nextStart = p.start;
+    var nextStart = null;
+    for (var ni = 0; ni < allPeriods.length; ni++) {
+      if (allPeriods[ni].start > thisUnit.end) {
+        if (!nextStart || allPeriods[ni].start < nextStart) nextStart = allPeriods[ni].start;
       }
     }
     if (!nextStart) return baseDays;
 
-    const gapDays = Math.round((nextStart - thisUnit.end) / 86400000) - 1;
+    var gapDays = Math.round((nextStart - thisUnit.end) / 86400000) - 1;
     if (gapDays > 0 && gapDays <= bridgeGap) {
       return baseDays + gapDays;
     }
     return baseDays;
   }
 
-  for (const u of filteredUnits) {
-    const period = getUnitActivePeriod(u);
-    const inspDays = daysBetween(period.start, period.end);
-    const ohDays = daysBetween(u.ohStart, u.ohEnd);
+  for (var gi = 0; gi < filteredUnits.length; gi++) {
+    var gu = filteredUnits[gi];
+    var period = getUnitActivePeriod(gu);
+    var inspDays = daysBetween(period.start, period.end);
+    var ohDays = daysBetween(gu.ohStart, gu.ohEnd);
 
-    // Clamp G to the user-selected period if needed
-    let effectiveOhStart = u.ohStart > simStart ? u.ohStart : simStart;
-    let effectiveOhEnd = u.ohEnd < simEnd ? u.ohEnd : simEnd;
-    const clampedOhDays = daysBetween(effectiveOhStart, effectiveOhEnd);
+    var effectiveOhStart = gu.ohStart > simStart ? gu.ohStart : simStart;
+    var effectiveOhEnd = gu.ohEnd < simEnd ? gu.ohEnd : simEnd;
+    var clampedOhDays = daysBetween(effectiveOhStart, effectiveOhEnd);
 
-    let effectiveInspStart = period.start > simStart ? period.start : simStart;
-    let effectiveInspEnd = period.end < simEnd ? period.end : simEnd;
-    const clampedInspDays = Math.max(0, daysBetween(effectiveInspStart, effectiveInspEnd));
+    var effectiveInspStart = period.start > simStart ? period.start : simStart;
+    var effectiveInspEnd = period.end < simEnd ? period.end : simEnd;
+    var clampedInspDays = Math.max(0, daysBetween(effectiveInspStart, effectiveInspEnd));
 
-    let gDays;
+    var gDays;
     if (gMode === 'overhaul') {
       gDays = clampedOhDays;
     } else if (gMode === 'ndt_et_bridge') {
-      gDays = calcBridgedG(u.short);
+      gDays = calcBridgedG(gu.short);
     } else {
       gDays = clampedInspDays;
     }
 
-    const avgPpl = gDays > 0 ? unitPersonDays[u.short] / (unitActiveDays[u.short] || 1) : 0;
-    const F = Math.max(1, Math.round(avgPpl));
+    var avgPpl = gDays > 0 ? unitPersonDays[gu.short] / (unitActiveDays[gu.short] || 1) : 0;
+    var fVal = Math.max(1, Math.round(avgPpl));
 
     allocationResult.push({
-      unit: u.short,
-      ohStart: u.ohStart, ohEnd: u.ohEnd,
-      ndtStart: u.ndtStart, ndtEnd: u.ndtEnd,
-      ndtPpl: u.ndtPpl,
-      etStart: u.etStart, etEnd: u.etEnd,
-      etPpl: u.etPpl,
+      unit: gu.short,
+      ohStart: gu.ohStart, ohEnd: gu.ohEnd,
+      ndtStart: gu.ndtStart, ndtEnd: gu.ndtEnd,
+      ndtPpl: gu.ndtPpl,
+      etStart: gu.etStart, etEnd: gu.etEnd,
+      etPpl: gu.etPpl,
       ohDays: clampedOhDays, inspDays: clampedInspDays,
-      F, G: gDays,
-      personDays: unitPersonDays[u.short],
+      F: fVal, G: gDays,
+      personDays: unitPersonDays[gu.short]
     });
   }
 
+  console.log('[recalc] done: ' + allocationResult.length + ' units, ' + dailyData.length + ' days');
   renderTable();
   renderChart();
   document.getElementById('exportBar').style.display = 'flex';
-  const pStart = document.getElementById('periodStart').value || dateStr(simStart);
-  const pEnd = document.getElementById('periodEnd').value || dateStr(simEnd);
-  document.getElementById('exportInfo').textContent = `${allocationResult.length} 機組 ｜ ${dailyData.length} 天 ｜ ${pStart} ~ ${pEnd}`;
+  var pStart = document.getElementById('periodStart').value || dateStr(simStart);
+  var pEnd = document.getElementById('periodEnd').value || dateStr(simEnd);
+  document.getElementById('exportInfo').textContent = allocationResult.length + ' 機組 ｜ ' + dailyData.length + ' 天 ｜ ' + pStart + ' ~ ' + pEnd;
 }
 
 // ===== TABLE RENDERING =====
 function renderTable() {
-  const rate = parseInt(document.getElementById('housingRate').value) || 2190;
-  const section = document.getElementById('tableSection');
-  document.getElementById('emptyTable').style.display = 'none';
+  var rate = parseInt(document.getElementById('housingRate').value) || 2190;
+  var section = document.getElementById('tableSection');
+  var emptyEl = document.getElementById('emptyTable');
+  if (emptyEl) emptyEl.style.display = 'none';
 
   let html = '<table><thead><tr>';
   const gLabel = document.getElementById('gMode').value === 'ndt_et_bridge' ? '住宿天數<br>(G)含橋接' : '住宿天數<br>(G)';
@@ -614,7 +653,8 @@ function setChartRes(res, btn) {
 
 function renderChart() {
   if (dailyData.length === 0) return;
-  document.getElementById('emptyChart').style.display = 'none';
+  var emptyChartEl = document.getElementById('emptyChart');
+  if (emptyChartEl) emptyChartEl.style.display = 'none';
   canvas.style.display = 'block';
   document.getElementById('legendBar').style.display = 'flex';
 
